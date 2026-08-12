@@ -201,9 +201,10 @@
   <div class="login-card">
     <div class="login-brand"><span class="dot"></span>SAKUMASCHOOL</div>
     <h2>管理者ログイン</h2>
-    <p class="lc-sub">管理者として登録されたメールアドレス宛にログインリンクを送ります。</p>
+    <p class="lc-sub">管理者メールアドレスとパスワードでログインしてください。</p>
     <input class="login-input" type="email" id="loginEmail" placeholder="管理者メールアドレス" autocomplete="email">
-    <button class="login-btn" id="sendLinkBtn">ログインリンクを送る</button>
+    <input class="login-input" type="password" id="loginPassword" placeholder="パスワード" autocomplete="current-password">
+    <button class="login-btn" id="loginBtn">ログイン</button>
     <div class="login-status" id="loginStatus"></div>
     <p class="lc-note">このページは生徒には共有しないでください。管理者権限を持つアカウントのみアクセスできます。</p>
   </div>
@@ -254,15 +255,15 @@
   const supabase = createClient(SUPABASE_URL, SUPABASE_ANON);
 
   /* ============================================================
-     AUTH（管理者ロール確認付き）
-     - ログイン後に user_metadata.role === 'admin' を確認
-     - フラグがなければ即ログアウト＆エラー表示
-     - DEVスイッチは完全廃止
+     AUTH（管理者パスワードログイン）
+     - メール＋パスワードでログイン（毎回メール送信不要）
+     - ログイン後にrole === 'admin'を確認、なければ弾く
   ============================================================ */
   const loginOverlay    = document.getElementById('loginOverlay');
   const appRoot         = document.getElementById('appRoot');
-  const sendLinkBtn     = document.getElementById('sendLinkBtn');
+  const loginBtn        = document.getElementById('loginBtn');
   const loginEmailInput = document.getElementById('loginEmail');
+  const loginPassword   = document.getElementById('loginPassword');
   const loginStatus     = document.getElementById('loginStatus');
   const logoutBtn       = document.getElementById('logoutBtn');
 
@@ -272,18 +273,13 @@
     return user?.user_metadata?.role === 'admin';
   }
 
-  function showAccessDenied(){
-    loginStatus.style.color = '#E0235E';
-    loginStatus.textContent = 'このアカウントには管理者権限がありません。';
-    sendLinkBtn.disabled = false;
-    sendLinkBtn.textContent = 'ログインリンクを送る';
-  }
-
   async function setLoggedIn(user){
     if(!isAdmin(user)){
-      // 管理者フラグがなければ即サインアウトして弾く
       await supabase.auth.signOut();
-      showAccessDenied();
+      loginStatus.style.color = '#E0235E';
+      loginStatus.textContent = 'このアカウントには管理者権限がありません。';
+      loginBtn.disabled = false;
+      loginBtn.textContent = 'ログイン';
       return;
     }
     currentAdminUser = user;
@@ -298,28 +294,30 @@
     appRoot.classList.add('locked');
   }
 
-  sendLinkBtn.addEventListener('click', async () => {
+  loginBtn.addEventListener('click', async () => {
     const email = loginEmailInput.value.trim();
-    if(!email || !email.includes('@')){
+    const pass  = loginPassword.value;
+    if(!email || !pass){
       loginStatus.style.color = '#E0235E';
-      loginStatus.textContent = 'メールアドレスを入力してください';
+      loginStatus.textContent = 'メールアドレスとパスワードを入力してください';
       return;
     }
-    sendLinkBtn.disabled = true;
-    sendLinkBtn.textContent = '送信中...';
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: { emailRedirectTo: window.location.href }
-    });
-    sendLinkBtn.disabled = false;
-    sendLinkBtn.textContent = 'ログインリンクを送る';
+    loginBtn.disabled = true;
+    loginBtn.textContent = 'ログイン中...';
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password: pass });
     if(error){
+      loginBtn.disabled = false;
+      loginBtn.textContent = 'ログイン';
       loginStatus.style.color = '#E0235E';
-      loginStatus.textContent = 'エラー：' + error.message;
-    } else {
-      loginStatus.style.color = '#00867A';
-      loginStatus.textContent = 'ログインリンクを送信しました。メールをご確認ください。';
+      loginStatus.textContent = 'メールアドレスまたはパスワードが違います';
+      return;
     }
+    await setLoggedIn(data.user);
+  });
+
+  // Enterキーでもログイン
+  [loginEmailInput, loginPassword].forEach(el => {
+    el.addEventListener('keydown', e => { if(e.key === 'Enter') loginBtn.click(); });
   });
 
   logoutBtn.addEventListener('click', async () => {
@@ -327,12 +325,10 @@
     setLoggedOut();
   });
 
-  // 初期セッション確認
   const { data: { session } } = await supabase.auth.getSession();
   if(session?.user) await setLoggedIn(session.user);
   else setLoggedOut();
 
-  // マジックリンクからの帰着を自動検知
   supabase.auth.onAuthStateChange(async (_event, session) => {
     if(session?.user) await setLoggedIn(session.user);
     else setLoggedOut();
