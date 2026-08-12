@@ -347,39 +347,51 @@
   let openEmail = null;
 
   async function fetchStudents(){
-    // Supabaseから全progressレコードを取得
+    // ① progressレコードを全件取得
     const { data: rows, error } = await supabase
       .from('progress')
       .select('user_id, item_id, item_type, completed, title, updated_at');
-
     if(error){ console.error(error); return []; }
     if(!rows || rows.length === 0) return [];
 
-    // user_idごとにグループ化
+    // ② profilesテーブルから名前とメールを取得
+    const userIds = [...new Set(rows.map(r => r.user_id))];
+    const { data: profiles } = await supabase
+      .from('profiles')
+      .select('user_id, nickname, email')
+      .in('user_id', userIds);
+    const profileMap = {};
+    (profiles || []).forEach(p => { profileMap[p.user_id] = p; });
+
+    // ③ user_idごとにグループ化
     const byUser = {};
     rows.forEach(row => {
       if(!byUser[row.user_id]) byUser[row.user_id] = [];
       byUser[row.user_id].push(row);
     });
 
-    // 各ユーザーの集計
+    // ④ 各ユーザーの集計
     const students = Object.entries(byUser).map(([userId, items]) => {
       const steps = items.filter(i => i.item_type === 'step');
       const links = items.filter(i => i.item_type === 'link');
       const completedSteps = steps.filter(i => i.completed);
-      const visitedLinks = links.filter(i => i.completed);
       const lastActive = items.reduce((latest, i) => {
         const d = new Date(i.updated_at);
         return d > latest ? d : latest;
       }, new Date(0));
+      const profile = profileMap[userId] || {};
 
       return {
         user_id: userId,
-        email: userId, // auth.usersへの直接アクセスはanon keyでは不可なのでIDで表示（後述）
+        nickname: profile.nickname || null,
+        email: profile.email || userId,
+        display: profile.nickname
+          ? profile.nickname + '（' + (profile.email || '') + '）'
+          : (profile.email || userId),
         total_steps: steps.length,
         completed_steps: completedSteps.length,
         total_links: links.length,
-        visited_links: visitedLinks.length,
+        visited_links: links.filter(i => i.completed).length,
         last_active: lastActive,
         items: items.map(i => ({
           id: i.item_id,
@@ -434,7 +446,7 @@
     const query  = document.getElementById('searchInput').value.trim().toLowerCase();
     const sortBy = document.getElementById('sortSelect').value;
 
-    let list = STUDENTS.filter(s => s.email.toLowerCase().includes(query));
+    let list = STUDENTS.filter(s => s.display.toLowerCase().includes(query));
     list.sort((a,b) => {
       const pa = (a.completed_steps||0)/(a.total_steps||1);
       const pb = (b.completed_steps||0)/(b.total_steps||1);
@@ -460,9 +472,9 @@
       const pct    = Math.round((s.completed_steps / (s.total_steps || 1)) * 100);
       const status = statusFor(s.last_active);
       const row    = document.createElement('div');
-      row.className = 'roster-row' + (openEmail === s.email ? ' open' : '');
+      row.className = 'roster-row' + (openEmail === s.user_id ? ' open' : '');
       row.innerHTML = `
-        <div class="r-email"><span class="status-dot ${status}"></span>${s.email}</div>
+        <div class="r-email"><span class="status-dot ${status}"></span>${s.display}</div>
         <div class="r-bar-wrap">
           <div class="r-bar-track"><div class="r-bar-fill" style="width:${pct}%"></div></div>
           <div class="r-pct">${pct}%</div>
@@ -472,12 +484,12 @@
         <div class="r-chevron">▶</div>
       `;
       row.addEventListener('click', () => {
-        openEmail = (openEmail === s.email) ? null : s.email;
+        openEmail = (openEmail === s.user_id) ? null : s.user_id;
         renderRoster();
       });
       roster.appendChild(row);
 
-      if(openEmail === s.email){
+      if(openEmail === s.user_id){
         const panel = document.createElement('div');
         panel.className = 'detail-panel open';
         const steps = s.items.filter(it => it.type === 'step');
