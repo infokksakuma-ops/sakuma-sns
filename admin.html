@@ -66,14 +66,7 @@
 
   .app.locked{filter:blur(2px); pointer-events:none; user-select:none;}
 
-  .dev-switch{
-    position:fixed; bottom:16px; right:16px; z-index:300;
-    background:#1A1A2E; color:#fff; border-radius:14px; padding:10px 14px;
-    font-size:0.72rem; display:flex; align-items:center; gap:10px;
-    box-shadow:0 8px 24px rgba(0,0,0,0.3);
-  }
-  .dev-switch label{display:flex; align-items:center; gap:6px; cursor:pointer;}
-  .dev-switch .tag{background:var(--pink); border-radius:6px; padding:2px 8px; font-weight:700; font-size:0.65rem;}
+
 
   /* ---------- shell ---------- */
   .app{max-width:1100px; margin:0 auto; padding:36px 28px 80px;}
@@ -216,11 +209,7 @@
   </div>
 </div>
 
-<!-- ============ DEV PREVIEW SWITCH ============ -->
-<div class="dev-switch">
-  <span class="tag">DEV</span>
-  <label><input type="checkbox" id="devLoginToggle"> 管理者としてログイン済み表示</label>
-</div>
+
 
 <div class="app locked" id="appRoot">
 
@@ -265,11 +254,13 @@
   const supabase = createClient(SUPABASE_URL, SUPABASE_ANON);
 
   /* ============================================================
-     AUTH
+     AUTH（管理者ロール確認付き）
+     - ログイン後に user_metadata.role === 'admin' を確認
+     - フラグがなければ即ログアウト＆エラー表示
+     - DEVスイッチは完全廃止
   ============================================================ */
   const loginOverlay    = document.getElementById('loginOverlay');
   const appRoot         = document.getElementById('appRoot');
-  const devToggle       = document.getElementById('devLoginToggle');
   const sendLinkBtn     = document.getElementById('sendLinkBtn');
   const loginEmailInput = document.getElementById('loginEmail');
   const loginStatus     = document.getElementById('loginStatus');
@@ -277,12 +268,30 @@
 
   let currentAdminUser = null;
 
-  function setLoggedIn(user){
+  function isAdmin(user){
+    return user?.user_metadata?.role === 'admin';
+  }
+
+  function showAccessDenied(){
+    loginStatus.style.color = '#E0235E';
+    loginStatus.textContent = 'このアカウントには管理者権限がありません。';
+    sendLinkBtn.disabled = false;
+    sendLinkBtn.textContent = 'ログインリンクを送る';
+  }
+
+  async function setLoggedIn(user){
+    if(!isAdmin(user)){
+      // 管理者フラグがなければ即サインアウトして弾く
+      await supabase.auth.signOut();
+      showAccessDenied();
+      return;
+    }
     currentAdminUser = user;
     loginOverlay.style.display = 'none';
     appRoot.classList.remove('locked');
     loadAndRenderDashboard();
   }
+
   function setLoggedOut(){
     currentAdminUser = null;
     loginOverlay.style.display = 'flex';
@@ -315,21 +324,17 @@
 
   logoutBtn.addEventListener('click', async () => {
     await supabase.auth.signOut();
-    devToggle.checked = false;
     setLoggedOut();
-  });
-
-  devToggle.addEventListener('change', () => {
-    devToggle.checked ? setLoggedIn({ email: 'admin@example.com', id: 'dev-admin' }) : setLoggedOut();
   });
 
   // 初期セッション確認
   const { data: { session } } = await supabase.auth.getSession();
-  if(session?.user) setLoggedIn(session.user);
+  if(session?.user) await setLoggedIn(session.user);
   else setLoggedOut();
 
-  supabase.auth.onAuthStateChange((_event, session) => {
-    if(session?.user) setLoggedIn(session.user);
+  // マジックリンクからの帰着を自動検知
+  supabase.auth.onAuthStateChange(async (_event, session) => {
+    if(session?.user) await setLoggedIn(session.user);
     else setLoggedOut();
   });
 
@@ -342,11 +347,6 @@
   let openEmail = null;
 
   async function fetchStudents(){
-    // DEVモードはダミーデータ
-    if(!currentAdminUser || currentAdminUser.id === 'dev-admin'){
-      return genDummyStudents(24);
-    }
-
     // Supabaseから全progressレコードを取得
     const { data: rows, error } = await supabase
       .from('progress')
@@ -451,7 +451,7 @@
       const empty = document.createElement('div');
       empty.className = 'roster-row';
       empty.style.cursor = 'default';
-      empty.innerHTML = '<div style="color:#9999a8; grid-column:1/-1;">該当する生徒が見つかりません（まだ誰もログインしていない場合は、DEVスイッチでプレビューできます）</div>';
+      empty.innerHTML = '<div style="color:#9999a8; grid-column:1/-1;">該当する生徒が見つかりません。生徒がまだログインしていない可能性があります。</div>';
       roster.appendChild(empty);
       return;
     }
