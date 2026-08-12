@@ -752,7 +752,8 @@
 
 <!-- ============ LOGIN OVERLAY ============ -->
 <div class="login-overlay" id="loginOverlay">
-  <div class="login-card">
+  <!-- Step 1: メール入力 -->
+  <div class="login-card" id="loginStep1">
     <div class="login-brand"><span class="dot"></span>SAKUMASCHOOL</div>
     <h2>TikTok大全 学習ハブ</h2>
     <p class="lc-sub">登録したメールアドレス宛にログイン用リンクを送ります。パスワードは不要です。</p>
@@ -761,12 +762,15 @@
     <div class="login-status" id="loginStatus"></div>
     <p class="lc-note">送信されたメール内のリンクをタップすると、自動的にログインされます。</p>
   </div>
-</div>
-
-<!-- ============ DEV PREVIEW SWITCH (本番のSupabase接続後は削除予定) ============ -->
-<div class="dev-switch">
-  <span class="tag">DEV</span>
-  <label><input type="checkbox" id="devLoginToggle"> ログイン済みとして表示</label>
+  <!-- Step 2: 初回ログイン時の名前入力（nickname未設定の場合のみ表示） -->
+  <div class="login-card" id="loginStep2" style="display:none;">
+    <div class="login-brand"><span class="dot"></span>SAKUMASCHOOL</div>
+    <h2>はじめまして！👋</h2>
+    <p class="lc-sub">サイト内での呼び方を教えてください。あとから変えることもできます。</p>
+    <input class="login-input" type="text" id="nicknameInput" placeholder="例：さくま、田中さん" maxlength="20" autocomplete="off">
+    <button class="login-btn" id="saveNicknameBtn">決定してスタート 🚀</button>
+    <div class="login-status" id="nicknameStatus"></div>
+  </div>
 </div>
 
 <div class="mobile-bar">
@@ -779,7 +783,7 @@
     <div class="brand"><span class="dot"></span>SAKUMASCHOOL<br><small>TikTok大全 / 学習ハブ</small></div>
 
     <div class="user-bar" id="userBar">
-      <span class="ub-email" id="userEmailLabel">test@example.com</span>
+      <span class="ub-email" id="userEmailLabel">—</span>
       <button id="logoutBtn">ログアウト</button>
     </div>
 
@@ -1434,30 +1438,102 @@
   /* ============================================================
      AUTH
   ============================================================ */
-  const loginOverlay   = document.getElementById('loginOverlay');
-  const appRoot        = document.getElementById('appRoot');
-  const devToggle      = document.getElementById('devLoginToggle');
-  const userEmailLabel = document.getElementById('userEmailLabel');
-  const logoutBtn      = document.getElementById('logoutBtn');
-  const sendLinkBtn    = document.getElementById('sendLinkBtn');
-  const loginEmailInput= document.getElementById('loginEmail');
-  const loginStatus    = document.getElementById('loginStatus');
+  const loginOverlay    = document.getElementById('loginOverlay');
+  const loginStep1      = document.getElementById('loginStep1');
+  const loginStep2      = document.getElementById('loginStep2');
+  const appRoot         = document.getElementById('appRoot');
+  const userEmailLabel  = document.getElementById('userEmailLabel');
+  const logoutBtn       = document.getElementById('logoutBtn');
+  const sendLinkBtn     = document.getElementById('sendLinkBtn');
+  const loginEmailInput = document.getElementById('loginEmail');
+  const loginStatus     = document.getElementById('loginStatus');
+  const saveNicknameBtn = document.getElementById('saveNicknameBtn');
+  const nicknameInput   = document.getElementById('nicknameInput');
+  const nicknameStatus  = document.getElementById('nicknameStatus');
 
   let currentUser = null;
 
-  function setLoggedIn(user){
+  // nicknameをSupabaseのprofilesテーブルに保存
+  async function saveProfile(user, nickname){
+    await supabase.from('profiles').upsert({
+      user_id: user.id,
+      email: user.email,
+      nickname: nickname,
+      updated_at: new Date().toISOString()
+    });
+  }
+
+  // ニックネームを取得（user_metadata.nickname）
+  function getNickname(user){
+    return user?.user_metadata?.nickname || null;
+  }
+
+  // サイドバーの表示名を更新（名前があれば名前、なければメール）
+  function updateUserLabel(user){
+    const name = getNickname(user);
+    userEmailLabel.textContent = name ? name + ' さん' : user.email;
+  }
+
+  async function setLoggedIn(user){
     currentUser = user;
-    loginOverlay.style.display = 'none';
-    appRoot.classList.remove('locked');
-    userEmailLabel.textContent = user.email;
-    renderProgressUI();
+    // ログインするたびにprofilesのemailを最新化（メール変更に対応）
+    await supabase.from('profiles').upsert({
+      user_id: user.id,
+      email: user.email,
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'user_id', ignoreDuplicates: false });
+
+    const nickname = getNickname(user);
+    if(!nickname){
+      loginOverlay.style.display = 'flex';
+      loginStep1.style.display = 'none';
+      loginStep2.style.display = 'block';
+      nicknameInput.focus();
+    } else {
+      loginOverlay.style.display = 'none';
+      appRoot.classList.remove('locked');
+      updateUserLabel(user);
+      renderProgressUI();
+    }
   }
 
   function setLoggedOut(){
     currentUser = null;
     loginOverlay.style.display = 'flex';
+    loginStep1.style.display = 'block';
+    loginStep2.style.display = 'none';
     appRoot.classList.add('locked');
   }
+
+  // 名前を保存してサイトへ
+  saveNicknameBtn.addEventListener('click', async () => {
+    const name = nicknameInput.value.trim();
+    if(!name){
+      nicknameStatus.style.color = '#E0235E';
+      nicknameStatus.textContent = '呼び方を入力してください';
+      return;
+    }
+    saveNicknameBtn.disabled = true;
+    saveNicknameBtn.textContent = '保存中...';
+    // user_metadataに保存
+    const { data, error } = await supabase.auth.updateUser({
+      data: { nickname: name }
+    });
+    if(error){
+      nicknameStatus.style.color = '#E0235E';
+      nicknameStatus.textContent = 'エラーが発生しました：' + error.message;
+      saveNicknameBtn.disabled = false;
+      saveNicknameBtn.textContent = '決定してスタート 🚀';
+      return;
+    }
+    currentUser = data.user;
+    // profilesテーブルにも保存（admin側で名前を表示するため）
+    await saveProfile(currentUser, name);
+    loginOverlay.style.display = 'none';
+    appRoot.classList.remove('locked');
+    updateUserLabel(currentUser);
+    renderProgressUI();
+  });
 
   // マジックリンク送信
   sendLinkBtn.addEventListener('click', async () => {
@@ -1487,34 +1563,18 @@
   // ログアウト
   logoutBtn.addEventListener('click', async () => {
     await supabase.auth.signOut();
-    devToggle.checked = false;
     setLoggedOut();
   });
 
-  // DEVスイッチ（プレビュー用、本番でも残しておいて問題なし）
-  devToggle.addEventListener('change', () => {
-    if(devToggle.checked){
-      setLoggedIn({ email: 'test@example.com', id: 'dev-user' });
-    } else {
-      setLoggedOut();
-    }
-  });
-
-  // セッション確認（ページ読み込み時 & マジックリンク帰着時）
+  // 初期セッション確認
   const { data: { session } } = await supabase.auth.getSession();
-  if(session?.user){
-    setLoggedIn(session.user);
-  } else {
-    setLoggedOut();
-  }
+  if(session?.user) await setLoggedIn(session.user);
+  else setLoggedOut();
 
-  // セッション変化を監視（マジックリンクをクリックして戻ってきた瞬間に自動ログイン）
-  supabase.auth.onAuthStateChange((_event, session) => {
-    if(session?.user){
-      setLoggedIn(session.user);
-    } else {
-      setLoggedOut();
-    }
+  // マジックリンク帰着時の自動ログイン
+  supabase.auth.onAuthStateChange(async (_event, session) => {
+    if(session?.user) await setLoggedIn(session.user);
+    else setLoggedOut();
   });
 
   /* ============================================================
@@ -1610,13 +1670,16 @@
 
   // --- 各 step-card に完了トグルを注入 ---
   function injectStepToggles(){
-    const seen = {}; // 同一セクション内でID重複した場合に連番を振るための記録
+    const seen = {};
     document.querySelectorAll('.step-card').forEach((card) => {
-      if(card.querySelector('.complete-toggle')) return; // 既に追加済みなら skip
+      if(card.querySelector('.complete-toggle')) return;
       let id = stableStepId(card);
       seen[id] = (seen[id] || 0) + 1;
-      if(seen[id] > 1) id = id + '-' + seen[id]; // 同名見出しが複数ある場合の衝突回避
+      if(seen[id] > 1) id = id + '-' + seen[id];
       card.dataset.progressId = id;
+      // タイトルテキストを取得（admin側の表示用）
+      const titleEl = card.querySelector('.step-title');
+      const titleText = (titleEl ? titleEl.textContent : '').trim();
       const toggle = document.createElement('button');
       toggle.className = 'complete-toggle';
       toggle.innerHTML = '✓';
@@ -1625,7 +1688,7 @@
         const done = !card.classList.contains('is-done');
         card.classList.toggle('is-done', done);
         toggle.classList.toggle('done', done);
-        saveProgressItem(id, done);
+        saveProgressItem(id, done, titleText); // タイトルも一緒に保存
         updateProgressBar();
       });
       card.appendChild(toggle);
@@ -1641,13 +1704,15 @@
       seen[id] = (seen[id] || 0) + 1;
       if(seen[id] > 1) id = id + '-' + seen[id];
       link.dataset.progressId = id;
+      // ラベルテキストを取得（admin側の表示用）
+      const labelText = link.textContent.replace('訪問済','').trim();
       const badge = document.createElement('span');
       badge.className = 'visited-badge';
       badge.textContent = '訪問済';
       link.appendChild(badge);
       link.addEventListener('click', () => {
         link.classList.add('visited');
-        markVisited(id);
+        markVisited(id, labelText); // ラベルも一緒に保存
       });
     });
   }
