@@ -293,7 +293,8 @@
   }
 
   function isAdmin(user){
-    return user?.user_metadata?.role === 'admin';
+    return user?.email === 'info.kksakuma@gmail.com'
+      && user?.user_metadata?.role === 'admin';
   }
 
   async function setLoggedIn(user){
