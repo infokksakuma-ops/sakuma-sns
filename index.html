@@ -656,6 +656,18 @@
     color:#9999a8;
     line-height:1.6;
   }
+  .lc-text-btn{
+    background:none;
+    border:none;
+    color:#9999a8;
+    font-size:0.78rem;
+    cursor:pointer;
+    font-family:'Noto Sans JP',sans-serif;
+    padding:4px 0;
+    text-decoration:underline;
+    text-underline-offset:2px;
+  }
+  .lc-text-btn:hover{color:var(--pink);}
 
   .app.locked{
     filter:blur(2px);
@@ -752,17 +764,47 @@
 
 <!-- ============ LOGIN OVERLAY ============ -->
 <div class="login-overlay" id="loginOverlay">
-  <!-- Step 1: メール入力 -->
+
+  <!-- Step 1: メール＋パスワードでログイン / 新規登録 -->
   <div class="login-card" id="loginStep1">
     <div class="login-brand"><span class="dot"></span>SAKUMASCHOOL</div>
-    <h2>TikTok大全 学習ハブ</h2>
-    <p class="lc-sub">登録したメールアドレス宛にログイン用リンクを送ります。パスワードは不要です。</p>
+    <h2 id="loginTitle">ログイン</h2>
+    <p class="lc-sub" id="loginSubtitle">メールアドレスとパスワードを入力してください。</p>
     <input class="login-input" type="email" id="loginEmail" placeholder="メールアドレス" autocomplete="email">
-    <button class="login-btn" id="sendLinkBtn">ログインリンクを送る</button>
+    <input class="login-input" type="password" id="loginPassword" placeholder="パスワード（8文字以上）" autocomplete="current-password">
+    <button class="login-btn" id="loginBtn">ログイン</button>
     <div class="login-status" id="loginStatus"></div>
-    <p class="lc-note">送信されたメール内のリンクをタップすると、自動的にログインされます。</p>
+    <div style="display:flex; justify-content:space-between; margin-top:14px;">
+      <button class="lc-text-btn" id="switchToRegister">初めての方はこちら</button>
+      <button class="lc-text-btn" id="switchToReset">パスワードを忘れた</button>
+    </div>
   </div>
-  <!-- Step 2: 初回ログイン時の名前入力（nickname未設定の場合のみ表示） -->
+
+  <!-- Step 1b: 新規登録モード -->
+  <div class="login-card" id="loginStep1b" style="display:none;">
+    <div class="login-brand"><span class="dot"></span>SAKUMASCHOOL</div>
+    <h2>アカウント登録</h2>
+    <p class="lc-sub">メールアドレスとパスワードを設定してください。</p>
+    <input class="login-input" type="email" id="registerEmail" placeholder="メールアドレス" autocomplete="email">
+    <input class="login-input" type="password" id="registerPassword" placeholder="パスワード（8文字以上）" autocomplete="new-password">
+    <input class="login-input" type="password" id="registerPasswordConfirm" placeholder="パスワード（確認）" autocomplete="new-password">
+    <button class="login-btn" id="registerBtn">登録する</button>
+    <div class="login-status" id="registerStatus"></div>
+    <button class="lc-text-btn" id="switchToLogin" style="margin-top:14px;">ログインに戻る</button>
+  </div>
+
+  <!-- Step 1c: パスワードリセット -->
+  <div class="login-card" id="loginStep1c" style="display:none;">
+    <div class="login-brand"><span class="dot"></span>SAKUMASCHOOL</div>
+    <h2>パスワードをリセット</h2>
+    <p class="lc-sub">登録したメールアドレスにリセット用リンクを送ります。</p>
+    <input class="login-input" type="email" id="resetEmail" placeholder="メールアドレス">
+    <button class="login-btn" id="resetBtn">リセットリンクを送る</button>
+    <div class="login-status" id="resetStatus"></div>
+    <button class="lc-text-btn" id="switchToLoginFromReset" style="margin-top:14px;">ログインに戻る</button>
+  </div>
+
+  <!-- Step 2: 初回ログイン時の名前入力 -->
   <div class="login-card" id="loginStep2" style="display:none;">
     <div class="login-brand"><span class="dot"></span>SAKUMASCHOOL</div>
     <h2>はじめまして！👋</h2>
@@ -771,6 +813,7 @@
     <button class="login-btn" id="saveNicknameBtn">決定してスタート 🚀</button>
     <div class="login-status" id="nicknameStatus"></div>
   </div>
+
 </div>
 
 <div class="mobile-bar">
@@ -1436,47 +1479,84 @@
   const supabase = createClient(SUPABASE_URL, SUPABASE_ANON);
 
   /* ============================================================
-     AUTH
+     AUTH（パスワード方式）
+     - ログイン：メール＋パスワード（毎回メール送信不要）
+     - 新規登録：メール＋パスワード設定→名前入力→サイトへ
+     - リセット：メールにリンク送信（Resend経由）
   ============================================================ */
-  const loginOverlay    = document.getElementById('loginOverlay');
-  const loginStep1      = document.getElementById('loginStep1');
-  const loginStep2      = document.getElementById('loginStep2');
-  const appRoot         = document.getElementById('appRoot');
-  const userEmailLabel  = document.getElementById('userEmailLabel');
-  const logoutBtn       = document.getElementById('logoutBtn');
-  const sendLinkBtn     = document.getElementById('sendLinkBtn');
-  const loginEmailInput = document.getElementById('loginEmail');
-  const loginStatus     = document.getElementById('loginStatus');
+  const loginOverlay     = document.getElementById('loginOverlay');
+  const loginStep1       = document.getElementById('loginStep1');
+  const loginStep1b      = document.getElementById('loginStep1b');
+  const loginStep1c      = document.getElementById('loginStep1c');
+  const loginStep2       = document.getElementById('loginStep2');
+  const appRoot          = document.getElementById('appRoot');
+  const userEmailLabel   = document.getElementById('userEmailLabel');
+  const logoutBtn        = document.getElementById('logoutBtn');
+
+  // ログイン画面
+  const loginBtn         = document.getElementById('loginBtn');
+  const loginEmail       = document.getElementById('loginEmail');
+  const loginPassword    = document.getElementById('loginPassword');
+  const loginStatus      = document.getElementById('loginStatus');
+  const switchToRegister = document.getElementById('switchToRegister');
+  const switchToReset    = document.getElementById('switchToReset');
+
+  // 新規登録画面
+  const registerBtn             = document.getElementById('registerBtn');
+  const registerEmail           = document.getElementById('registerEmail');
+  const registerPassword        = document.getElementById('registerPassword');
+  const registerPasswordConfirm = document.getElementById('registerPasswordConfirm');
+  const registerStatus          = document.getElementById('registerStatus');
+  const switchToLogin           = document.getElementById('switchToLogin');
+
+  // パスワードリセット画面
+  const resetBtn              = document.getElementById('resetBtn');
+  const resetEmail            = document.getElementById('resetEmail');
+  const resetStatus           = document.getElementById('resetStatus');
+  const switchToLoginFromReset= document.getElementById('switchToLoginFromReset');
+
+  // 名前入力画面
   const saveNicknameBtn = document.getElementById('saveNicknameBtn');
   const nicknameInput   = document.getElementById('nicknameInput');
   const nicknameStatus  = document.getElementById('nicknameStatus');
 
   let currentUser = null;
 
-  // nicknameをSupabaseのprofilesテーブルに保存
+  /* -- 画面切り替えヘルパー -- */
+  function showCard(cardId){
+    [loginStep1, loginStep1b, loginStep1c, loginStep2].forEach(el => {
+      el.style.display = el.id === cardId ? 'block' : 'none';
+    });
+  }
+
+  switchToRegister.addEventListener('click', () => showCard('loginStep1b'));
+  switchToReset.addEventListener('click',    () => showCard('loginStep1c'));
+  switchToLogin.addEventListener('click',    () => showCard('loginStep1'));
+  switchToLoginFromReset.addEventListener('click', () => showCard('loginStep1'));
+
+  /* -- プロフィール保存 -- */
   async function saveProfile(user, nickname){
     await supabase.from('profiles').upsert({
       user_id: user.id,
       email: user.email,
-      nickname: nickname,
+      nickname,
       updated_at: new Date().toISOString()
     });
   }
 
-  // ニックネームを取得（user_metadata.nickname）
   function getNickname(user){
     return user?.user_metadata?.nickname || null;
   }
 
-  // サイドバーの表示名を更新（名前があれば名前、なければメール）
   function updateUserLabel(user){
     const name = getNickname(user);
     userEmailLabel.textContent = name ? name + ' さん' : user.email;
   }
 
+  /* -- ログイン成功後の処理 -- */
   async function setLoggedIn(user){
     currentUser = user;
-    // ログインするたびにprofilesのemailを最新化（メール変更に対応）
+    // profilesのemailを常に最新化
     await supabase.from('profiles').upsert({
       user_id: user.id,
       email: user.email,
@@ -1485,11 +1565,12 @@
 
     const nickname = getNickname(user);
     if(!nickname){
+      // 初回：名前入力へ
       loginOverlay.style.display = 'flex';
-      loginStep1.style.display = 'none';
-      loginStep2.style.display = 'block';
+      showCard('loginStep2');
       nicknameInput.focus();
     } else {
+      // 2回目以降：そのままサイトへ
       loginOverlay.style.display = 'none';
       appRoot.classList.remove('locked');
       updateUserLabel(user);
@@ -1500,12 +1581,94 @@
   function setLoggedOut(){
     currentUser = null;
     loginOverlay.style.display = 'flex';
-    loginStep1.style.display = 'block';
-    loginStep2.style.display = 'none';
+    showCard('loginStep1');
     appRoot.classList.add('locked');
   }
 
-  // 名前を保存してサイトへ
+  /* -- ログイン -- */
+  loginBtn.addEventListener('click', async () => {
+    const email = loginEmail.value.trim();
+    const pass  = loginPassword.value;
+    if(!email || !pass){
+      loginStatus.style.color = '#E0235E';
+      loginStatus.textContent = 'メールアドレスとパスワードを入力してください';
+      return;
+    }
+    loginBtn.disabled = true;
+    loginBtn.textContent = 'ログイン中...';
+    const { error } = await supabase.auth.signInWithPassword({ email, password: pass });
+    loginBtn.disabled = false;
+    loginBtn.textContent = 'ログイン';
+    if(error){
+      loginStatus.style.color = '#E0235E';
+      loginStatus.textContent = 'メールアドレスまたはパスワードが違います';
+    }
+  });
+
+  // Enterキーでもログイン
+  [loginEmail, loginPassword].forEach(el => {
+    el.addEventListener('keydown', e => { if(e.key === 'Enter') loginBtn.click(); });
+  });
+
+  /* -- 新規登録 -- */
+  registerBtn.addEventListener('click', async () => {
+    const email = registerEmail.value.trim();
+    const pass  = registerPassword.value;
+    const pass2 = registerPasswordConfirm.value;
+    if(!email || !pass){
+      registerStatus.style.color = '#E0235E';
+      registerStatus.textContent = 'メールアドレスとパスワードを入力してください';
+      return;
+    }
+    if(pass.length < 8){
+      registerStatus.style.color = '#E0235E';
+      registerStatus.textContent = 'パスワードは8文字以上にしてください';
+      return;
+    }
+    if(pass !== pass2){
+      registerStatus.style.color = '#E0235E';
+      registerStatus.textContent = 'パスワードが一致しません';
+      return;
+    }
+    registerBtn.disabled = true;
+    registerBtn.textContent = '登録中...';
+    const { error } = await supabase.auth.signUp({ email, password: pass });
+    registerBtn.disabled = false;
+    registerBtn.textContent = '登録する';
+    if(error){
+      registerStatus.style.color = '#E0235E';
+      registerStatus.textContent = 'エラー：' + error.message;
+    } else {
+      registerStatus.style.color = '#00867A';
+      registerStatus.textContent = '登録しました！そのままログインできます。';
+    }
+  });
+
+  /* -- パスワードリセット -- */
+  resetBtn.addEventListener('click', async () => {
+    const email = resetEmail.value.trim();
+    if(!email){
+      resetStatus.style.color = '#E0235E';
+      resetStatus.textContent = 'メールアドレスを入力してください';
+      return;
+    }
+    resetBtn.disabled = true;
+    resetBtn.textContent = '送信中...';
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.origin + window.location.pathname
+    });
+    resetBtn.disabled = false;
+    resetBtn.textContent = 'リセットリンクを送る';
+    if(error){
+      resetStatus.style.color = '#E0235E';
+      resetStatus.textContent = 'エラー：' + error.message;
+    } else {
+      resetStatus.style.color = '#00867A';
+      resetStatus.textContent = 'リセット用メールを送信しました。メールをご確認ください。';
+    }
+  });
+
+  /* -- 名前を保存してサイトへ -- */
   saveNicknameBtn.addEventListener('click', async () => {
     const name = nicknameInput.value.trim();
     if(!name){
@@ -1515,19 +1678,15 @@
     }
     saveNicknameBtn.disabled = true;
     saveNicknameBtn.textContent = '保存中...';
-    // user_metadataに保存
-    const { data, error } = await supabase.auth.updateUser({
-      data: { nickname: name }
-    });
+    const { data, error } = await supabase.auth.updateUser({ data: { nickname: name } });
     if(error){
       nicknameStatus.style.color = '#E0235E';
-      nicknameStatus.textContent = 'エラーが発生しました：' + error.message;
+      nicknameStatus.textContent = 'エラー：' + error.message;
       saveNicknameBtn.disabled = false;
       saveNicknameBtn.textContent = '決定してスタート 🚀';
       return;
     }
     currentUser = data.user;
-    // profilesテーブルにも保存（admin側で名前を表示するため）
     await saveProfile(currentUser, name);
     loginOverlay.style.display = 'none';
     appRoot.classList.remove('locked');
@@ -1535,43 +1694,17 @@
     renderProgressUI();
   });
 
-  // マジックリンク送信
-  sendLinkBtn.addEventListener('click', async () => {
-    const email = loginEmailInput.value.trim();
-    if(!email || !email.includes('@')){
-      loginStatus.style.color = '#E0235E';
-      loginStatus.textContent = 'メールアドレスを入力してください';
-      return;
-    }
-    sendLinkBtn.disabled = true;
-    sendLinkBtn.textContent = '送信中...';
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: { emailRedirectTo: window.location.href }
-    });
-    sendLinkBtn.disabled = false;
-    sendLinkBtn.textContent = 'ログインリンクを送る';
-    if(error){
-      loginStatus.style.color = '#E0235E';
-      loginStatus.textContent = 'エラーが発生しました：' + error.message;
-    } else {
-      loginStatus.style.color = '#00867A';
-      loginStatus.textContent = 'ログインリンクを送信しました。メールをご確認ください。';
-    }
-  });
-
-  // ログアウト
+  /* -- ログアウト -- */
   logoutBtn.addEventListener('click', async () => {
     await supabase.auth.signOut();
     setLoggedOut();
   });
 
-  // 初期セッション確認
+  /* -- 初期セッション確認 -- */
   const { data: { session } } = await supabase.auth.getSession();
   if(session?.user) await setLoggedIn(session.user);
   else setLoggedOut();
 
-  // マジックリンク帰着時の自動ログイン
   supabase.auth.onAuthStateChange(async (_event, session) => {
     if(session?.user) await setLoggedIn(session.user);
     else setLoggedOut();
