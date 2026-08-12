@@ -198,7 +198,9 @@
 
 <!-- ============ ADMIN LOGIN OVERLAY ============ -->
 <div class="login-overlay" id="loginOverlay">
-  <div class="login-card">
+
+  <!-- 通常ログイン -->
+  <div class="login-card" id="cardLogin">
     <div class="login-brand"><span class="dot"></span>SAKUMASCHOOL</div>
     <h2>管理者ログイン</h2>
     <p class="lc-sub">管理者メールアドレスとパスワードでログインしてください。</p>
@@ -208,6 +210,18 @@
     <div class="login-status" id="loginStatus"></div>
     <p class="lc-note">このページは生徒には共有しないでください。管理者権限を持つアカウントのみアクセスできます。</p>
   </div>
+
+  <!-- パスワード再設定（リセットメールのリンクから来た時のみ表示） -->
+  <div class="login-card" id="cardReset" style="display:none;">
+    <div class="login-brand"><span class="dot"></span>SAKUMASCHOOL</div>
+    <h2>新しいパスワードを設定</h2>
+    <p class="lc-sub">新しいパスワードを入力してください（8文字以上）。</p>
+    <input class="login-input" type="password" id="newPassword" placeholder="新しいパスワード" autocomplete="new-password">
+    <input class="login-input" type="password" id="newPasswordConfirm" placeholder="新しいパスワード（確認）" autocomplete="new-password">
+    <button class="login-btn" id="updatePasswordBtn">パスワードを更新する</button>
+    <div class="login-status" id="resetStatus"></div>
+  </div>
+
 </div>
 
 
@@ -256,18 +270,27 @@
 
   /* ============================================================
      AUTH（管理者パスワードログイン）
-     - メール＋パスワードでログイン（毎回メール送信不要）
-     - ログイン後にrole === 'admin'を確認、なければ弾く
   ============================================================ */
-  const loginOverlay    = document.getElementById('loginOverlay');
-  const appRoot         = document.getElementById('appRoot');
-  const loginBtn        = document.getElementById('loginBtn');
-  const loginEmailInput = document.getElementById('loginEmail');
-  const loginPassword   = document.getElementById('loginPassword');
-  const loginStatus     = document.getElementById('loginStatus');
-  const logoutBtn       = document.getElementById('logoutBtn');
+  const loginOverlay      = document.getElementById('loginOverlay');
+  const cardLogin         = document.getElementById('cardLogin');
+  const cardReset         = document.getElementById('cardReset');
+  const appRoot           = document.getElementById('appRoot');
+  const loginBtn          = document.getElementById('loginBtn');
+  const loginEmailInput   = document.getElementById('loginEmail');
+  const loginPassword     = document.getElementById('loginPassword');
+  const loginStatus       = document.getElementById('loginStatus');
+  const logoutBtn         = document.getElementById('logoutBtn');
+  const updatePasswordBtn = document.getElementById('updatePasswordBtn');
+  const newPassword       = document.getElementById('newPassword');
+  const newPasswordConfirm= document.getElementById('newPasswordConfirm');
+  const resetStatus       = document.getElementById('resetStatus');
 
   let currentAdminUser = null;
+
+  function showCard(id){
+    cardLogin.style.display = id === 'cardLogin' ? 'block' : 'none';
+    cardReset.style.display = id === 'cardReset' ? 'block' : 'none';
+  }
 
   function isAdmin(user){
     return user?.user_metadata?.role === 'admin';
@@ -291,9 +314,11 @@
   function setLoggedOut(){
     currentAdminUser = null;
     loginOverlay.style.display = 'flex';
+    showCard('cardLogin');
     appRoot.classList.add('locked');
   }
 
+  /* -- 通常ログイン -- */
   loginBtn.addEventListener('click', async () => {
     const email = loginEmailInput.value.trim();
     const pass  = loginPassword.value;
@@ -315,23 +340,65 @@
     await setLoggedIn(data.user);
   });
 
-  // Enterキーでもログイン
   [loginEmailInput, loginPassword].forEach(el => {
     el.addEventListener('keydown', e => { if(e.key === 'Enter') loginBtn.click(); });
   });
 
+  /* -- パスワード更新（リセットメールから来た時） -- */
+  updatePasswordBtn.addEventListener('click', async () => {
+    const pass  = newPassword.value;
+    const pass2 = newPasswordConfirm.value;
+    if(!pass || pass.length < 8){
+      resetStatus.style.color = '#E0235E';
+      resetStatus.textContent = 'パスワードは8文字以上にしてください';
+      return;
+    }
+    if(pass !== pass2){
+      resetStatus.style.color = '#E0235E';
+      resetStatus.textContent = 'パスワードが一致しません';
+      return;
+    }
+    updatePasswordBtn.disabled = true;
+    updatePasswordBtn.textContent = '更新中...';
+    const { error } = await supabase.auth.updateUser({ password: pass });
+    if(error){
+      resetStatus.style.color = '#E0235E';
+      resetStatus.textContent = 'エラー：' + error.message;
+      updatePasswordBtn.disabled = false;
+      updatePasswordBtn.textContent = 'パスワードを更新する';
+      return;
+    }
+    resetStatus.style.color = '#00867A';
+    resetStatus.textContent = 'パスワードを更新しました！ログインしてください。';
+    setTimeout(() => {
+      showCard('cardLogin');
+      loginOverlay.style.display = 'flex';
+    }, 2000);
+  });
+
+  /* -- ログアウト -- */
   logoutBtn.addEventListener('click', async () => {
     await supabase.auth.signOut();
     setLoggedOut();
   });
 
+  /* -- 初期セッション確認 & recoveryモード検知 -- */
   const { data: { session } } = await supabase.auth.getSession();
   if(session?.user) await setLoggedIn(session.user);
   else setLoggedOut();
 
-  supabase.auth.onAuthStateChange(async (_event, session) => {
-    if(session?.user) await setLoggedIn(session.user);
-    else setLoggedOut();
+  supabase.auth.onAuthStateChange(async (event, session) => {
+    if(event === 'PASSWORD_RECOVERY'){
+      // パスワードリセットメールのリンクから来た場合
+      loginOverlay.style.display = 'flex';
+      appRoot.classList.add('locked');
+      showCard('cardReset');
+      newPassword.focus();
+    } else if(session?.user){
+      await setLoggedIn(session.user);
+    } else {
+      setLoggedOut();
+    }
   });
 
   /* ============================================================
