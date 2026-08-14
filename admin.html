@@ -124,10 +124,10 @@
   }
   .roster-row{
     display:grid;
-    grid-template-columns: 1fr 110px 130px 130px 28px;
+    grid-template-columns: 1fr 140px 100px 100px 110px 110px 28px;
     align-items:center;
-    gap:14px;
-    padding:16px 22px;
+    gap:12px;
+    padding:14px 22px;
     border-bottom:1px solid var(--line);
     cursor:pointer;
     transition:background .12s ease;
@@ -140,11 +140,13 @@
   .roster-row.head:hover{background:#FFF1F4;}
   .r-email{font-size:0.88rem; font-weight:500; overflow:hidden; text-overflow:ellipsis;}
   .r-bar-wrap{display:flex; align-items:center; gap:8px;}
-  .r-bar-track{flex:1; height:7px; border-radius:99px; background:#F0E6D6; overflow:hidden;}
-  .r-bar-fill{height:100%; border-radius:99px; background:linear-gradient(90deg,var(--pink),var(--teal));}
-  .r-pct{font-size:0.74rem; color:#6b6b80; width:34px; text-align:right; flex-shrink:0;}
-  .r-count{font-size:0.82rem; color:#6b6b80; text-align:center;}
+  .r-bar-track{flex:1; height:10px; border-radius:99px; background:#F0E6D6; overflow:hidden;}
+  .r-bar-fill{height:100%; border-radius:99px; background:linear-gradient(90deg,var(--pink),var(--teal)); transition:width .3s ease;}
+  .r-pct{font-size:0.8rem; font-weight:700; color:var(--ink); width:38px; text-align:right; flex-shrink:0;}
+  .r-count{font-size:0.78rem; color:#6b6b80; text-align:center;}
+  .r-visited{font-size:0.78rem; color:#00867A; text-align:center;}
   .r-active{font-size:0.78rem; color:#6b6b80; text-align:center;}
+  .r-joined{font-size:0.78rem; color:#6b6b80; text-align:center;}
   .r-chevron{font-size:0.8rem; color:#9999a8; text-align:center; transition:transform .15s ease;}
   .roster-row.open .r-chevron{transform:rotate(90deg);}
 
@@ -189,8 +191,8 @@
   }
 
   @media (max-width:720px){
-    .roster-row{grid-template-columns: 1fr 80px 28px;}
-    .r-count, .r-active{display:none;}
+    .roster-row{grid-template-columns: 1fr 100px 28px;}
+    .r-count, .r-visited, .r-active, .r-joined{display:none;}
   }
 </style>
 </head>
@@ -250,7 +252,7 @@
 
   <div class="roster" id="roster">
     <div class="roster-row head">
-      <div>生徒</div><div>進捗</div><div style="text-align:center;">完了数</div><div style="text-align:center;">最終アクティブ</div><div></div>
+      <div>生徒</div><div>進捗</div><div style="text-align:center;">完了数</div><div style="text-align:center;">訪問済</div><div style="text-align:center;">登録日</div><div style="text-align:center;">最終ログイン</div><div></div>
     </div>
     <!-- roster rows injected by JS -->
   </div>
@@ -418,11 +420,11 @@
     if(error){ console.error(error); return []; }
     if(!rows || rows.length === 0) return [];
 
-    // ② profilesテーブルから名前とメールを取得
+    // ② profilesテーブルから名前・メール・ログイン日・登録日を取得
     const userIds = [...new Set(rows.map(r => r.user_id))];
     const { data: profiles } = await supabase
       .from('profiles')
-      .select('user_id, nickname, email')
+      .select('user_id, nickname, email, last_login_at, joined_at')
       .in('user_id', userIds);
     const profileMap = {};
     (profiles || []).forEach(p => { profileMap[p.user_id] = p; });
@@ -457,6 +459,8 @@
         total_links: links.length,
         visited_links: links.filter(i => i.completed).length,
         last_active: lastActive,
+        last_login_at: profile.last_login_at ? new Date(profile.last_login_at) : null,
+        joined_at: profile.joined_at ? new Date(profile.joined_at) : null,
         items: items.map(i => ({
           id: i.item_id,
           title: i.title || i.item_id,
@@ -479,10 +483,12 @@
   function daysAgo(d){
     return Math.floor((new Date() - d) / (1000*60*60*24));
   }
-  function statusFor(lastActive){
-    const d = daysAgo(lastActive);
-    if(d <= 3) return 'active';
-    if(d <= 10) return 'stale';
+  function statusFor(s){
+    const d = s.last_login_at || s.last_active;
+    if(!d) return 'inactive';
+    const days = Math.floor((new Date() - d) / (1000*60*60*24));
+    if(days <= 3) return 'active';
+    if(days <= 10) return 'stale';
     return 'inactive';
   }
 
@@ -534,7 +540,7 @@
 
     list.forEach(s => {
       const pct    = Math.round((s.completed_steps / (s.total_steps || 1)) * 100);
-      const status = statusFor(s.last_active);
+      const status = statusFor(s);
       const row    = document.createElement('div');
       row.className = 'roster-row' + (openEmail === s.user_id ? ' open' : '');
       row.innerHTML = `
@@ -543,8 +549,10 @@
           <div class="r-bar-track"><div class="r-bar-fill" style="width:${pct}%"></div></div>
           <div class="r-pct">${pct}%</div>
         </div>
-        <div class="r-count">${s.completed_steps}/${s.total_steps} ステップ</div>
-        <div class="r-active">${fmtDate(s.last_active)}</div>
+        <div class="r-count">${s.completed_steps}/${s.total_steps}</div>
+        <div class="r-visited">${s.visited_links}/${s.total_links}</div>
+        <div class="r-joined">${s.joined_at ? fmtDate(s.joined_at) : '—'}</div>
+        <div class="r-active">${s.last_login_at ? fmtDate(s.last_login_at) : '—'}</div>
         <div class="r-chevron">▶</div>
       `;
       row.addEventListener('click', () => {
