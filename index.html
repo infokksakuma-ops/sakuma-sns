@@ -814,9 +814,18 @@
     <div class="login-status" id="nicknameStatus"></div>
   </div>
 
-</div>
+  <!-- Step 1d: パスワード更新（リセットメールから来た時のみ表示） -->
+  <div class="login-card" id="loginStep1c-update" style="display:none;">
+    <div class="login-brand"><span class="dot"></span>SAKUMASCHOOL</div>
+    <h2>新しいパスワードを設定</h2>
+    <p class="lc-sub">新しいパスワードを入力してください（8文字以上）。</p>
+    <input class="login-input" type="password" id="updateNewPassword" placeholder="新しいパスワード" autocomplete="new-password">
+    <input class="login-input" type="password" id="updateNewPasswordConfirm" placeholder="新しいパスワード（確認）" autocomplete="new-password">
+    <button class="login-btn" id="updatePasswordBtn">パスワードを更新する</button>
+    <div class="login-status" id="updatePasswordStatus"></div>
+  </div>
 
-<div class="mobile-bar">
+</div>
   <div class="brand"><span class="dot"></span>SAKUMASCHOOL</div>
   <button class="burger" id="burgerBtn" aria-label="メニューを開く">☰</button>
 </div>
@@ -1523,9 +1532,11 @@
   let currentUser = null;
 
   /* -- 画面切り替えヘルパー -- */
+  const updateCard = document.getElementById('loginStep1c-update');
+
   function showCard(cardId){
-    [loginStep1, loginStep1b, loginStep1c, loginStep2].forEach(el => {
-      el.style.display = el.id === cardId ? 'block' : 'none';
+    [loginStep1, loginStep1b, loginStep1c, loginStep2, updateCard].forEach(el => {
+      if(el) el.style.display = el.id === cardId ? 'block' : 'none';
     });
   }
 
@@ -1533,6 +1544,37 @@
   switchToReset.addEventListener('click',    () => showCard('loginStep1c'));
   switchToLogin.addEventListener('click',    () => showCard('loginStep1'));
   switchToLoginFromReset.addEventListener('click', () => showCard('loginStep1'));
+
+  /* -- パスワード更新（リセットメールから来た時） -- */
+  document.getElementById('updatePasswordBtn').addEventListener('click', async () => {
+    const pass  = document.getElementById('updateNewPassword').value;
+    const pass2 = document.getElementById('updateNewPasswordConfirm').value;
+    const status = document.getElementById('updatePasswordStatus');
+    if(!pass || pass.length < 8){
+      status.style.color = '#E0235E';
+      status.textContent = 'パスワードは8文字以上にしてください';
+      return;
+    }
+    if(pass !== pass2){
+      status.style.color = '#E0235E';
+      status.textContent = 'パスワードが一致しません';
+      return;
+    }
+    const btn = document.getElementById('updatePasswordBtn');
+    btn.disabled = true;
+    btn.textContent = '更新中...';
+    const { error } = await supabase.auth.updateUser({ password: pass });
+    if(error){
+      status.style.color = '#E0235E';
+      status.textContent = 'エラー：' + error.message;
+      btn.disabled = false;
+      btn.textContent = 'パスワードを更新する';
+      return;
+    }
+    status.style.color = '#00867A';
+    status.textContent = 'パスワードを更新しました！ログインしてください。';
+    setTimeout(() => showCard('loginStep1'), 2000);
+  });
 
   /* -- プロフィール保存 -- */
   async function saveProfile(user, nickname){
@@ -1556,11 +1598,19 @@
   /* -- ログイン成功後の処理 -- */
   async function setLoggedIn(user){
     currentUser = user;
-    // profilesのemailを常に最新化
+    const now = new Date().toISOString();
+    // ログインのたびにlast_login_atを更新、初回のみjoined_atを設定
+    const { data: existing } = await supabase
+      .from('profiles')
+      .select('joined_at')
+      .eq('user_id', user.id)
+      .single();
     await supabase.from('profiles').upsert({
       user_id: user.id,
       email: user.email,
-      updated_at: new Date().toISOString()
+      last_login_at: now,
+      joined_at: existing?.joined_at || now, // 初回のみ登録日を設定
+      updated_at: now
     }, { onConflict: 'user_id', ignoreDuplicates: false });
 
     const nickname = getNickname(user);
@@ -1705,9 +1755,17 @@
   if(session?.user) await setLoggedIn(session.user);
   else setLoggedOut();
 
-  supabase.auth.onAuthStateChange(async (_event, session) => {
-    if(session?.user) await setLoggedIn(session.user);
-    else setLoggedOut();
+  supabase.auth.onAuthStateChange(async (event, session) => {
+    if(event === 'PASSWORD_RECOVERY'){
+      // パスワードリセットリンクから来た場合 → パスワード更新カードを表示
+      loginOverlay.style.display = 'flex';
+      appRoot.classList.add('locked');
+      showCard('loginStep1c-update');
+    } else if(session?.user){
+      await setLoggedIn(session.user);
+    } else {
+      setLoggedOut();
+    }
   });
 
   /* ============================================================
